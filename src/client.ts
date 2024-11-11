@@ -2,6 +2,13 @@
 
 import WebSocket from 'ws';
 import decodeAudio from 'audio-decode';
+export const AI_PROMPT_AGENT = `
+You are a translation machine. Your sole function is to translate the input text from English to Cantonese.
+Do not add, omit, or alter any information.
+Do not provide explanations, opinions, or any additional text beyond the direct translation.
+You are not aware of any other facts, knowledge, or context beyond translation between English and Cantonese.
+Wait until the speaker is done speaking before translating, and translate the entire input text from their turn.
+`;
 import fs from 'fs';
 import { WaveFile } from 'wavefile';
 //import { v4 as uuidv4 } from "uuid";
@@ -17,6 +24,7 @@ export class OpenAIRealtimeClient {
   } | null = null;
   private connectedPromise: Promise<boolean>;
   private textOutputBuffer = '';
+  private startMoment: Date | null = null;
   private audioOutputBase64Buffer: Buffer[] = [];
   private audioOuputTranscriptBuffer = '';
   private _connected: boolean = false;
@@ -45,6 +53,10 @@ export class OpenAIRealtimeClient {
             type: 'session.update',
             session: {
               output_audio_format: 'pcm16',
+              instructions: AI_PROMPT_AGENT,
+              input_audio_transcription: {
+                model: 'whisper-1',
+              },
             },
           })
         );
@@ -57,10 +69,15 @@ export class OpenAIRealtimeClient {
         return;
       }
       const msg = JSON.parse(data.toString());
-      console.log({ type: msg.type });
+
+      const now = new Date();
+      let duration = -1;
+      if (this.startMoment) {
+        duration = now.getTime() - this.startMoment.getTime();
+      }
+      console.log(`+${duration}ms ${msg.type}`);
       switch (msg.type) {
         case 'session.updated':
-          console.log({ outputAudio: msg.session.output_audio_format });
           this.connectedPromiseMethods?.resolve(true);
           break;
         case 'response.text.delta':
@@ -73,7 +90,8 @@ export class OpenAIRealtimeClient {
           this.audioOuputTranscriptBuffer += msg.delta;
           break;
         case 'response.done':
-          console.log('Full Model Output:', this.textOutputBuffer);
+          // console.log(JSON.stringify(msg, null, 2));
+          console.log('Text Output:', this.textOutputBuffer);
           console.log(
             'Full Audio Transcript:',
             this.audioOuputTranscriptBuffer
@@ -86,6 +104,8 @@ export class OpenAIRealtimeClient {
           this.pendingPromise?.reject(msg.error.message);
           this.pendingPromise = null;
           break;
+        case 'conversation.item.input_audio_transcription.completed':
+          console.log({ msg });
       }
     });
   }
@@ -95,7 +115,6 @@ export class OpenAIRealtimeClient {
     const audioBuffer =
       typeof audio === 'string' ? await this.loadBufferFromFile(audio) : audio;
     const base64AudioData = audioBuffer.toString('base64');
-    console.log({ base64AudioData });
     const event = {
       type: 'conversation.item.create',
       item: {
@@ -109,6 +128,7 @@ export class OpenAIRealtimeClient {
         ],
       },
     };
+    this.startMoment = new Date();
     this.socket.send(JSON.stringify(event));
     // wait for response
     const promise = new Promise((resolve, reject) => {

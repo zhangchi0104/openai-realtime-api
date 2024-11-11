@@ -8,8 +8,9 @@ async function main() {
   );
   const resp = await client.connect();
   console.log({ resp });
-
-  await client.sendAudio('input.wav');
+  console.time('sendAudio');
+  await client.sendAudio('input3.wav');
+  console.timeEnd('sendAudio');
   process.exit(0);
 }
 main();
